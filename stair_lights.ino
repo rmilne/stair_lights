@@ -18,8 +18,8 @@
 #define BRIGHTNESS 254
 #define DURATION 10000  // 10 seconds
 #define STAIR_DELAY 600 // .6 seconds between stairs
-#define FSR_THRESHOLD = 150 // TODO Needs calibration
-
+#define FSR_THRESHOLD 150 // TODO Needs calibration
+#define DEBUG 1
 
 
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_STAIRS, PIN, NEO_GRB + NEO_KHZ800);
@@ -29,18 +29,26 @@ Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_STAIRS, PIN, NEO_GRB + NEO_KHZ80
 // on a live circuit...if you must, connect GND first.
 //
 
+void p(char *str)
+{
+  if (DEBUG)
+    Serial.println(str);
+}
 
 class Step
 {
-    int index;
-    int state;
-    int brightness;
-    int target_brightness;
-    long duration;
-    unsigned long prev_time;
-    int fade;
+    public:
+      int index;
+      int state;
+      int brightness;
+      int target_brightness;
+      long duration;
+      unsigned long prev_time;
+      int fade;
 
-
+    public:
+    Step() {}
+    
     public:
     Step(int idx, int fade_rate)
     {
@@ -101,13 +109,15 @@ class Step
 
 class Stairs
 {
-    Step steps[NUM_STAIRS];
-    int state;
-    int last_stair_idx;
-    unsigned long last_stair_on_time;
-    unsigned long stair_delay;
-    int brightness;
-    long duration;
+    public:
+      Step *steps[NUM_STAIRS];
+      int state;
+      int last_stair_idx;
+      unsigned long last_stair_on_time;
+      unsigned long last_print;
+      unsigned long stair_delay;
+      int brightness;
+      long duration;
 
     public:
     Stairs(int bright, long dur, unsigned long strdelay)
@@ -118,6 +128,7 @@ class Stairs
         state = OFF;
         last_stair_idx = -1;
         last_stair_on_time = 0;
+        last_print = 0;
         stair_delay = strdelay;
         brightness = bright;
         duration = dur;
@@ -134,7 +145,6 @@ class Stairs
         int i = 0;
         unsigned long curr_time = millis();
         long since_last_update = curr_time - last_stair_on_time;
-        int update = 0;
 
         // check for stairs turning on in progress
         if (since_last_update >= stair_delay || since_last_update < 0) 
@@ -142,7 +152,7 @@ class Stairs
             if (state == UP) 
             {
                 last_stair_idx++;
-                steps[last_stair_idx].set(ON, brightness, duration)
+                steps[last_stair_idx]->set(ON, brightness, duration);
                     if (last_stair_idx == (NUM_STAIRS - 1))
                     {
                         state = OFF;
@@ -151,7 +161,7 @@ class Stairs
             if (state == DOWN)
             {
                 last_stair_idx--;
-                steps[last_stair_idx].set(ON, brightness, duration)
+                steps[last_stair_idx]->set(ON, brightness, duration);
                     if (last_stair_idx == 0)
                     {
                         state = OFF;
@@ -160,13 +170,15 @@ class Stairs
         }
 
         // update each step
+        print_stairs(curr_time);
         for (i = 0; i < NUM_STAIRS; i++) {
-            steps[i].update(curr_time);
+            steps[i]->update(curr_time);
         }
     }
 
     void going_up() 
     {
+        // TODO - cool down period, motion sensor stays high for a few seconds
         state = UP;
         last_stair_idx = 0;
         last_stair_on_time = 0;
@@ -174,15 +186,28 @@ class Stairs
 
     void going_down()
     {
+        // TODO - another cooldown period
         state = DOWN;
         last_stair_idx = NUM_STAIRS-1;
         last_stair_on_time = 0;
+    }
+
+    void print_stairs(unsigned long curr_time)
+    {
+        if (curr_time - last_print > 1000 && DEBUG) {
+            for (int i = 0; i < NUM_STAIRS; i++) {
+                Serial.print(steps[i]->state);
+            }
+            Serial.println("");
+            last_print = curr_time;
+        }
     }
 };
 
 long last_fsr;
 long last_motion;
-Stairs stairs = new Stairs(BRIGHTNESS, DURATION, STAIR_DELAY);
+Stairs stairs(BRIGHTNESS, DURATION, STAIR_DELAY);
+
 
 void setup() {
     pinMode(MOTION, INPUT);
@@ -190,7 +215,10 @@ void setup() {
     strip.show(); // Initialize all pixels to 'off'
     last_fsr = 0;
     last_motion = 0;
+    Serial.begin(9600);
+    p("in setup");
 }
+
 
 void loop() {
     // FSR is top of stairs
@@ -203,15 +231,18 @@ void loop() {
         bottom = motion_detect();
         if (top)
         {
+            p("detected top weight, going_down()");
             stairs.going_down();
         }
         else if (bottom)
         {
+            p("detected bottom motion, going_up()");
             stairs.going_up();
         }
     }
     stairs.update();
     delay(UPDATE_DELAY);
+    strip.show();
 }
 
 bool fsr_detect() 
@@ -226,7 +257,7 @@ bool fsr_detect()
     return false;
 }
 
-void motion_detect() {
+bool motion_detect() {
     int motion = digitalRead(MOTION);
     if (motion == HIGH)
     {
@@ -234,4 +265,3 @@ void motion_detect() {
     }
     return false;
 }
-
